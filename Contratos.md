@@ -36,13 +36,13 @@ Abaixo estão os protótipos de funções que **devem** ser implementados. Não 
 - **TX (`TX/src/crc/ModuloCRC.h`):**
   ```cpp
   // Calcula e retorna o valor de CRC sobre o buffer de dados.
-  uint16_t calcularCRC(const uint8_t* payload, uint8_t tamanho);
+  uint16_t calcularCRC(const uint8_t* payload, uint8_t tam);
   ```
 - **RX (`RX/src/crc/ModuloCRC.h`):**
   ```cpp
   // Calcula o CRC do payload recebido e compara com o crc_recebido no final do frame.
   // Retorna 'true' se estiver válido, 'false' se estiver corrompido.
-  bool verificarCRC(const uint8_t* payload, uint8_t tamanho, uint16_t crc_recebido);
+  bool verificarCRC(const uint8_t* payload, uint8_t tam, uint16_t crc_recebido);
   ```
 
 ### 3.3. Correção de Erros (até 3 bits) - Pessoa 3
@@ -50,15 +50,15 @@ Abaixo estão os protótipos de funções que **devem** ser implementados. Não 
 - **TX (`TX/src/correcao_erro/CorrecaoErro.h`):**
   ```cpp
   // Pega o 'payload_in' original e escreve em 'buffer_out' os dados + bits de paridade.
-  // Atualiza 'tamanho_out' com o novo tamanho total (payload + redundância).
-  void codificarCorrecao(const uint8_t* payload_in, uint8_t tamanho_in, uint8_t* buffer_out, uint8_t* tamanho_out);
+  // Atualiza 'tam_out' com o novo tamanho total (payload + redundância).
+  void codificarCorrecao(const uint8_t* payload_in, uint8_t tam_in, uint8_t* buffer_out, uint8_t* tam_out);
   ```
 - **RX (`RX/src/correcao_erro/CorrecaoErro.h`):**
   ```cpp
   // Avalia o buffer, tenta corrigir erros de bit diretamente nele.
   // Retorna a quantidade de bits corrigidos (0 a 3). Retorna -1 se houver erros acima de 3 (falha).
-  // Atualiza 'tamanho_out' descartando os bits de paridade e deixando apenas o tamanho do payload real.
-  int decodificarCorrecao(uint8_t* buffer_in_out, uint8_t tamanho_in, uint8_t* tamanho_out);
+  // Atualiza 'tam_out' descartando os bits de paridade e deixando apenas o tamanho do payload real.
+  int decodificarCorrecao(uint8_t* buffer_in_out, uint8_t tam_in, uint8_t* tam_out);
   ```
 
 ### 3.4. Codificação de Linha - Pessoas 1, 2 e Eu
@@ -67,11 +67,12 @@ Abaixo estão os protótipos de funções que **devem** ser implementados. Não 
 **Exemplo para NRZ-L (Pessoa 1) em `src/nrz_l/NRZL.h`:**
 - **TX:** 
   ```cpp
-  void enviarFrame_NRZL(const uint8_t* frame, uint8_t tamanho, int pin_led, unsigned long tempo_bit);
+  void enviarFrame_NRZL(const uint8_t* frame, uint8_t tam, int pin_led, unsigned long tempo_bit);
   ```
 - **RX:** 
   ```cpp
   // Lê o 1º byte que dita o tamanho, depois faz um loop para ler esse N restante. Salva no frame_out e atualiza o tam_lido.
+  // OBRIGATÓRIO: Implementar um 'timeout' no ciclo interno (ex: retornar 'false' se decorrerem 50ms sem luz) para evitar loop infinito.
   bool receberFrame_NRZL(uint8_t* frame_out, uint8_t* tam_lido, int pin_sensor, unsigned long tempo_bit);
   ```
 
@@ -82,8 +83,10 @@ Não tera lógicas complexas no `.ino`. O `.ino` será basicamente para orquestr
 
 ### Transmissor
 ```cpp
-uint8_t payload[64] = "Ola Marte"; //Ola Mundo diferente (Marte estaria incluso em Mundo ?)
-uint8_t tam_payload = 9;
+String msg = "Ola Marte"; // Futuramente substituído por leitura da Serial
+uint8_t payload[64];
+msg.getBytes(payload, 64); // Extrai os bytes físicos com tipagem correta
+uint8_t tam_payload = msg.length();
 
 uint8_t buffer_crc[66]; // Payload + 2 bytes do CRC
 uint8_t buffer_luz[128]; // (Payload+CRC) + Bits de Paridade da Correção
@@ -114,19 +117,20 @@ uint8_t tam_corrigido = 0;
 // Sincroniza e descobre a velocidade
 unsigned long tempo_bit = receberSincronismo(PINO_LDR);
 
-// Lê a luz. A função 'receberFrame' primeiro lê 1 byte (o tamanho), e depois lê o resto baseado nesse byte.
-receberFrame_NRZL(buffer_recebido, &tam_lido, PINO_LDR, tempo_bit);
-
-// Tenta corrigir a sujeira da luz
-int erros = decodificarCorrecao(buffer_recebido, tam_lido, &tam_corrigido);
-
-// Se a correção não estourou o limite (não retornou -1), valida o CRC
-if(erros != -1) {
-    uint8_t tam_payload = tam_corrigido - 2; // Tira os 2 bytes do CRC
-    uint16_t crc_recebido = (buffer_recebido[tam_payload] << 8) | buffer_recebido[tam_payload + 1];
+// Lê a luz com timeout de segurança
+if(receberFrame_NRZL(buffer_recebido, &tam_lido, PINO_LDR, tempo_bit)) {
     
-    if(verificarCRC(buffer_recebido, tam_payload, crc_recebido)) {
-        // Repassa os dados puros para a Serial
+    // Tenta corrigir a sujeira da luz
+    int erros = decodificarCorrecao(buffer_recebido, tam_lido, &tam_corrigido);
+
+    // Se a correção funcionou e o pacote tem tamanho seguro (evita underflow)
+    if(erros != -1 && tam_corrigido >= 2) {
+        uint8_t tam_payload = tam_corrigido - 2; // Seguro para isolar o payload
+        uint16_t crc_recebido = (buffer_recebido[tam_payload] << 8) | buffer_recebido[tam_payload + 1];
+        
+        if(verificarCRC(buffer_recebido, tam_payload, crc_recebido)) {
+            // SUCESSO ABSOLUTO! Repassa os dados puros para a Serial
+        }
     }
 }
 ```
