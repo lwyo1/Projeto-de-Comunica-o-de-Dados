@@ -52,3 +52,10 @@ Como parte dos requisitos, e preciso entregar um **Relatório Completo**. Para f
 4. **Pontos positivos e negativos:** Avaliação crítica da sua própria implementação.
 5. **Casos de Teste (MUITO IMPORTANTE):** Inserir figuras (prints) mostrando as execuções isoladas do seu módulo, testes de mesa, ou links de vídeos provando que o seu código funciona.
 
+## Simulador e Testes Práticos
+
+Para facilitar os testes de integração do código, montei um ambiente de simulação no Tinkercad contendo o Arduino Emissor (TX) e o Arduino Receptor (RX) já interligados.
+
+**Link do Simulador:** [Tinkercad - Projeto TX/RX Arduino](https://www.tinkercad.com/things/f21a4JdJJI2-txrx-arduino)
+
+Podem duplicar o projeto no Tinkercad e colar o código de vocês para validar a lógica em um ambiente controlado antes de colocar no hardware físico.
