@@ -142,5 +142,6 @@ Dessa forma o trabalho de todos se conecta de forma fluida.
 
 ## 5. Dicas Extras para Integração (Arduino)
 *   **Pinos no `.ino`:** Use `#define PINO_LED` e `#define PINO_LDR` no início do arquivo para que fique padronizado.
-*   **Temporização Precisa:** Nas funções de codificação de linha, para garantir o tempo de bit exigido no contrato, recomendo o uso da função `delayMicroseconds()` em conjunto com `digitalWrite()` e `digitalRead()`. 
-*   **Tempos curtos:** Tratem adequadamente o `tempo_bit` caso ele seja muito curto (tipo: < 20 µs) para não engasgar a leitura no microcontrolador.
+*   **Temporização Não-Bloqueante (PROIBIDO USAR DELAY):** Nas funções de codificação de linha, é estritamente proibido usar `delay()` ou `delayMicroseconds()`. Como o LDR é sensível, o ciclo de leitura precisa de rodar livremente. O controlo de tempo do bit deve ser feito monitorizando continuamente a função `micros()`. Exemplo de espera correta: 
+    `unsigned long inicio = micros();`
+    `while(micros() - inicio < tempo_bit) { /* Lê o sensor e processa */ }`
