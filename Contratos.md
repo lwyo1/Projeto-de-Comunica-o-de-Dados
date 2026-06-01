@@ -22,13 +22,13 @@ Abaixo estão os protótipos de funções que **devem** ser implementados. Não 
 **Objetivo:** Estabelecer a taxa de transmissão entre emissor e receptor.
 - **TX (`TX/src/auto_baud/AutoBaud.h`):** 
   ```cpp
-  // Pisca o LED em um padrão de calibração (tipo: 10101010) indicando o início de transmissão.
+  // Pisca o LED num padrão de calibração. O TX deve enviar no MÍNIMO 16 bits alternados (tipo: dois bytes 0xAA, 0xAA).
   void enviarSincronismo(int pin_led, unsigned long tempo_bit);
   ```
 - **RX (`RX/src/auto_baud/AutoBaud.h`):**
   ```cpp
-  // Bloqueia a execução até ler o padrão de calibração. Retorna o tempo de bit descoberto em microssegundos.
-  // Sugestão: Adicione um timeout máximo (ex: 5 segundos) e retorne 0 se falhar.
+  // O RX deve medir a duração de várias transições desse padrão de 16 bits e calcular a média do tempo_bit (em microssegundos).
+  // Sugestão: Adicione um timeout máximo (tipo: 5 segundos) e retorne 0 se falhar.
   unsigned long receberSincronismo(int pin_sensor);
   ```
 
@@ -52,6 +52,7 @@ Abaixo estão os protótipos de funções que **devem** ser implementados. Não 
 - **TX (`TX/src/correcao_erro/CorrecaoErro.h`):**
   ```cpp
   // Pega o 'payload_in' original e escreve em 'buffer_out' os dados + bits de paridade.
+  // O buffer_out tem capacidade MÁXIMA física alocada para 256 bytes. A função não deve NUNCA exceder esse limite.
   // Atualiza 'tam_out' com o novo tamanho total (payload + redundância).
   void codificarCorrecao(const uint8_t* payload_in, uint8_t tam_in, uint8_t* buffer_out, uint8_t* tam_out);
   ```
@@ -74,12 +75,14 @@ Abaixo estão os protótipos de funções que **devem** ser implementados. Não 
   ```
 - **RX:** 
   ```cpp
-  // Lê o 1º byte (tamanho N), aloca e lê o restante. Salva no frame_out e atualiza o tam_lido.
-  // OBRIGATÓRIO: O timeout de leitura deve ser DINÂMICO e proporcional. Ex: 10 * tempo_bit sem luz = aborta e retorna false.
+  // Lê o 1º byte (tamanho N) para controlar o loop, mas NÃO copia este byte para o frame_out. 
+  // O frame_out receberá APENAS os N bytes de dados seguintes. O tam_lido deve ser igual a esse N.
+  // OBRIGATÓRIO: O timeout de leitura deve ser DINÂMICO e proporcional. tipo: 10 * tempo_bit sem luz = aborta e retorna false.
   bool receberFrame_NRZL(uint8_t* frame_out, uint8_t* tam_lido, int pin_sensor, unsigned long tempo_bit);
   ```
 
 *A mesma estrutura de funções deve ser reproduzida para `NRZI`, `Manchester` e `ManchesterDiferencial`.*
+> **ATENÇÃO para Manchesters Diferencial:** O parâmetro `tempo_bit` representa a duração TOTAL de um bit. A função deve gerar as duas metades ( nível alto por `tempo_bit/2`, depois baixo por `tempo_bit/2` ou vice-versa).
 
 ## 4. Integração no `.ino` Principal
 Não tera lógicas complexas no `.ino`. O `.ino` será basicamente para orquestrar as chamadas.
@@ -142,6 +145,7 @@ Dessa forma o trabalho de todos se conecta de forma fluida.
 
 ## 5. Dicas Extras para Integração (Arduino)
 *   **Pinos no `.ino`:** Use `#define PINO_LED` e `#define PINO_LDR` no início do arquivo para que fique padronizado.
+*   **Velocidade de Transmissão:** Defina uma constante no `.ino` do transmissor. tipo: `#define TEMPO_BIT 1000` (microssegundos). O valor típico é 1000 µs = 1000 bps (1 kbps).
 *   **Temporização Não-Bloqueante (PROIBIDO USAR DELAY):** Nas funções de codificação de linha, é estritamente proibido usar `delay()` ou `delayMicroseconds()`. Como o LDR é sensível, o ciclo de leitura precisa de rodar livremente. O controlo de tempo do bit deve ser feito monitorizando continuamente a função `micros()`. Exemplo de espera correta: 
     `unsigned long inicio = micros();`
     `while(micros() - inicio < tempo_bit) { /* Lê o sensor e processa */ }`
