@@ -1,7 +1,126 @@
 ﻿% Relatório - correcao_erro
-\section{Módulo correcao_erro}
+\section{Módulo correcao\_erro}
+
 \subsection{Modelagem}
+
+O requisito do trabalho pede a correção de até 3 erros de bit na mensagem recebida.
+Para isso, foi utilizado o \textbf{Código de Hamming}, técnica clássica de correção de
+erros baseada em bits de paridade cruzados.
+
+Um bloco de Hamming(7,4) padrão utiliza 4 bits de dados e 3 bits de paridade
+(posições $1, 2$ e $4$), cada um cobrindo um subconjunto específico dos bits de dados.
+No receptor, recalculam-se as três paridades e o resultado (chamado de \emph{síndrome})
+indica exatamente qual das 7 posições está errada, permitindo inverter o bit
+automaticamente.
+
+O problema do Hamming(7,4) puro é que ele não diferencia ``1 bit errado'' de
+``2 bits errados'': em caso de 2 erros no mesmo bloco, ele calcula uma síndrome
+não-nula e corrige um bit, só que o bit \emph{errado}, corrompendo silenciosamente
+o dado sem avisar.
+
+Para resolver isso, foi adicionado um \textbf{8º bit de paridade geral}, cobrindo o
+bloco inteiro (esquema SECDED -- \emph{Single Error Correction, Double Error
+Detection}). Com esse bit extra, é possível distinguir os quatro casos:
+
+\begin{itemize}
+  \item síndrome $= 0$ e paridade geral correta $\rightarrow$ nenhum erro;
+  \item síndrome $= 0$ e paridade geral incorreta $\rightarrow$ erro apenas no bit de
+        paridade geral (não afeta os dados, mas é corrigido);
+  \item síndrome $\neq 0$ e paridade geral incorreta $\rightarrow$ 1 erro real nos dados,
+        posição indicada pela síndrome, corrigível;
+  \item síndrome $\neq 0$ e paridade geral correta $\rightarrow$ 2 erros no mesmo bloco,
+        detectáveis mas \emph{não} corrigíveis.
+\end{itemize}
+
+Cada byte do payload (payload + CRC, conforme o contrato de integração) é dividido em
+2 nibbles de 4 bits, e cada nibble vira 1 byte codificado (8 bits: 4 de dado + 4 de
+redundância). Como cada nibble forma um bloco independente, erros em posições
+diferentes da mensagem (em blocos distintos) podem ser corrigidos simultaneamente --
+cobrindo o requisito de corrigir até 3 bits errados na mensagem como um todo, desde
+que não caiam 2 erros dentro do mesmo bloco de 8 bits.
+
 \subsection{Lógica e Tomada de Decisão}
+
+A decisão de usar Hamming(8,4) por nibble, em vez de um código corretor mais complexo
+como BCH ou Reed-Solomon, foi motivada por:
+
+\begin{itemize}
+  \item \textbf{Simplicidade de implementação e depuração}: o algoritmo é totalmente
+        baseado em operações XOR e deslocamento de bits, sem necessidade de aritmética
+        em corpos finitos (\emph{Galois Fields}), o que seria mais complexo de implementar
+        corretamente no tempo disponível;
+  \item \textbf{Independência total dos outros módulos}: como pedido no
+        \texttt{Contratos.md}, a função só recebe e devolve arrays de bytes, sem
+        depender de nenhuma lógica de CRC, sincronismo ou codificação de linha;
+  \item \textbf{Overhead previsível}: cada byte de entrada sempre vira exatamente 2 bytes
+        de saída, o que facilita o cálculo do buffer necessário (o pior caso,
+        payload de 66 bytes -- 64 da mensagem + 2 do CRC -- gera 132 bytes, dentro do
+        limite de 256 bytes definido no contrato).
+\end{itemize}
+
+A assinatura das funções segue exatamente o que foi definido no contrato do grupo:
+\texttt{codificarCorrecao} escreve os dados corrigidos em \texttt{buffer\_out} e atualiza
+\texttt{tam\_out}; \texttt{decodificarCorrecao} corrige o próprio buffer recebido
+(\texttt{buffer\_in\_out}), retorna a quantidade de bits corrigidos (0 a 3) ou \texttt{-1}
+em caso de falha irrecuperável.
+
 \subsection{Dificuldades e Pontos Críticos}
+
+A principal dificuldade foi garantir que o algoritmo não ``corrigisse errado'' em
+silêncio -- ou seja, garantir que 2 erros no mesmo bloco fossem detectados como falha
+em vez de gerarem uma correção incorreta sem aviso. Isso só foi resolvido com a adição
+do 8º bit de paridade geral (SECDED), pois o Hamming(7,4) sozinho não tem essa
+capacidade de distinção.
+
+Outro ponto de atenção foi o dimensionamento do buffer: como o contrato define um limite
+físico de 256 bytes para \texttt{buffer\_out}, foi adicionada uma trava de segurança em
+\texttt{codificarCorrecao} que interrompe a codificação caso o limite seja atingido,
+evitando overflow de buffer.
+
+\subsection{Pontos Positivos e Negativos}
+
+\textbf{Positivos:}
+\begin{itemize}
+  \item Implementação simples, testável isoladamente sem hardware nem dependência de
+        outros módulos;
+  \item Detecta e recusa (retorna \texttt{-1}) blocos com erro grave demais, em vez de
+        entregar dados corrompidos silenciosamente;
+  \item Overhead fixo e previsível (sempre 2x o tamanho de entrada).
+\end{itemize}
+
+\textbf{Negativos:}
+\begin{itemize}
+  \item Overhead de 100\% (dobra o tamanho da mensagem transmitida), maior que
+        esquemas mais sofisticados como BCH;
+  \item Só corrige com garantia se os erros caírem em blocos diferentes -- se 2 bits
+        errados caírem no mesmo byte codificado, a mensagem inteira é descartada mesmo
+        que o restante estivesse correto.
+\end{itemize}
+
 \subsection{Testes e Validação}
 
+Foram implementados testes automatizados cobrindo os seguintes cenários:
+
+\begin{itemize}
+  \item Payload sem nenhum erro (deve retornar 0 bits corrigidos e dado idêntico ao original);
+  \item 1 bit invertido em 1 bloco (deve corrigir e recuperar o dado original);
+  \item 3 bits invertidos, cada um em um bloco diferente (deve corrigir os 3 e recuperar
+        o dado original);
+  \item 2 bits invertidos no mesmo bloco (deve retornar \texttt{-1}, falha detectada e
+        não corrigida);
+  \item Payload no tamanho máximo permitido pelo contrato (66 bytes = 64 da mensagem +
+        2 do CRC), validando que a saída codificada (132 bytes) cabe dentro do limite
+        de 256 bytes do buffer.
+\end{itemize}
+
+Todos os casos foram executados com sucesso tanto em ambiente de desenvolvimento (PC,
+compilado com \texttt{g++}) quanto em um sketch de teste isolado (\texttt{.ino}) que
+imprime os resultados via Monitor Serial, sem depender de nenhum pino de hardware --
+já que este módulo trabalha apenas sobre arrays de bytes em memória.
+
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\textwidth]{correcao_erro/teste_serial.png}
+  \caption{Saída do Monitor Serial com os testes do módulo correcao\_erro}
+\end{figure}
